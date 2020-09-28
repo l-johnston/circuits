@@ -11,6 +11,8 @@ from unyt import (
     s,
     kg,
     m,
+    dB,
+    matplotlib_support,
 )
 from circuits.common import AmbientTemperature
 from circuits.components import (
@@ -22,6 +24,7 @@ from circuits.components import (
     Capacitor,
     Inductor,
     VoltageSource,
+    Opamp,
 )
 from circuits.circuit import Circuit
 from circuits.netlist import Netlist
@@ -52,6 +55,7 @@ __all__ = [
     "s",
     "kg",
     "m",
+    "Opamp",
 ]
 
 # pylint: disable=invalid-name
@@ -62,6 +66,8 @@ signalports = {
     "out": Port("out", PortDirection.OUT),
 }
 read_netlist = Netlist()
+matplotlib_support()
+matplotlib_support.label_style = "/"
 
 
 def __dir__():

@@ -1,7 +1,7 @@
 """Common definitions"""
 from collections import namedtuple
 from enum import Enum
-
+from sympy import S
 
 AmbientTemperature = namedtuple("AmbientTemperature", field_names=["nom", "min", "max"])
 
@@ -24,3 +24,7 @@ def singleton(cls):
 
     single_cls.instance = None
     return single_cls
+
+
+j = S.ImaginaryUnit  # sqrt(-1)
+π = S.Pi

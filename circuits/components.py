@@ -1,6 +1,6 @@
 """Definition of component types"""
 import numbers
-from sympy import Symbol
+from sympy import Symbol, sympify
 from unyt import unyt_quantity, K
 from circuits.common import PortDirection
 
@@ -111,19 +111,20 @@ class PowerTap(Port):
 class Component:
     """Base class for components
 
-    Args:
-        name (str): name of component - follow schematic convention of capital letter
-            followed by number such as R1, U1, etc.
-        pins (list): list of Pins
-        kwargs
+    Parameters
+    ----------
+    name : str
+        name of component - follow schematic convention of capital letter
+        followed by number such as R1, U1, etc.
+    pins :list
+        list of Pins
+    kwargs
     """
 
     def __init__(self, name, pins, **kwargs):
         self._name = name
         self._symbol = Symbol(name)
         self._pins = {}
-        self._tol = 0.0
-        self._tc = 0.0 / K
         for pin in pins:
             if isinstance(pin, Pin):
                 self._pins[pin.name] = pin
@@ -158,37 +159,22 @@ class Component:
         except KeyError:
             raise ValueError(f"unknown pin {name}") from None
 
-    @property
-    def tol(self):
-        """value (float): tolerance"""
-        return self._tol
-
-    @tol.setter
-    def tol(self, value):
-        self._tol = value
-
-    @property
-    def tc(self):
-        """value (unyt_quantity or float): temperature coefficient, drift per kelvin"""
-        return self._tc
-
-    @tc.setter
-    def tc(self, value):
-        self._tc = unyt_quantity(value, "1/K")
-
 
 class PassiveComponent(Component):
     """Class for passive, two-port resistors, capacitors and inductors
 
-    Args:
-        name (str): name of passive component
-        value (float or unyt_quantity): nominal value
+    Parameters
+    ----------
+    name : str, name of passive component
+    value : float or unyt_quantity, nominal value
     """
 
     def __init__(self, name, value):
         pins = [Pin("1", 1, self), Pin("2", 2, self)]
         super().__init__(name, pins)
         self._value = value
+        self._tol = 0.0
+        self._tc = 0.0 / K
         self._refs = []
         self._laplace_s = Symbol("s")
         self._laplace_admittance = None
@@ -209,6 +195,24 @@ class PassiveComponent(Component):
                 ref.value = func(value)
             except NameError:
                 pass
+
+    @property
+    def tol(self):
+        """value (float): tolerance"""
+        return self._tol
+
+    @tol.setter
+    def tol(self, value):
+        self._tol = value
+
+    @property
+    def tc(self):
+        """value (unyt_quantity or float): temperature coefficient, drift per kelvin"""
+        return self._tc
+
+    @tc.setter
+    def tc(self, value):
+        self._tc = unyt_quantity(value, "1/K")
 
     @property
     def admittance(self):
@@ -412,3 +416,28 @@ class VoltageSource(Component):
 
     def __repr__(self):
         return f"<VoltageSource:{self._name},{self._value}>"
+
+
+class Opamp(Component):
+    """Opamp
+
+    Pins
+    ----
+    1 'IN+' positive input
+    2 'IN-' negative input
+    3 'OUT' output
+
+    Parameters
+    ----------
+    name : str
+    aol : sympy expression, open-loop transfer function Aol(s)
+    """
+
+    def __init__(self, name, aol, **kwargs):
+        pins = [
+            Pin("IN+", 1, self, direction=PortDirection.IN),
+            Pin("IN-", 2, self, direction=PortDirection.IN),
+            Pin("OUT", 3, self, direction=PortDirection.OUT),
+        ]
+        super().__init__(name, pins, **kwargs)
+        self.aol = sympify(aol)

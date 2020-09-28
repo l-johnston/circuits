@@ -1,4 +1,6 @@
 """Netlist"""
+import io
+import pathlib
 import re
 from circuits import (
     Resistor,
@@ -6,6 +8,7 @@ from circuits import (
     Inductor,
     VoltageSource,
     Circuit,
+    Opamp,
 )
 from circuits.common import singleton
 
@@ -39,11 +42,12 @@ COMPONENTS = {
     "C": Capacitor,
     "L": Inductor,
     "V": VoltageSource,
+    "opamp": Opamp,
 }
 
 TOKEN_TYPES = {
-    "refdes": "^[RCLV][0-9]+$",
-    "node": "^[0-9]+$",
+    "refdes": "^([RCLV]|XU)[0-9]+$",
+    "node": r"^[\w]+$",
     "value": VALUE_PATTERN,
     "key_value": r"^[\w]+=" + VALUE_PATTERN + "$",
 }
@@ -106,6 +110,24 @@ class Netlist:
                     param, value = token.split("=")
                     setattr(self.components[refdes], param.lower(), scale_value(value))
                 self.nodes[refdes] = (node1, node2)
+            elif component_type.startswith("X"):
+                nodes = []
+                i = 0
+                for i, token in enumerate(tokens[1:]):
+                    if token in ["opamp"]:
+                        break
+                    nodes.append(self.validate_token(token, "node"))
+                else:
+                    raise ValueError(f"'{line}' unrecognized")
+                refdes = refdes[1:]
+                params = {}
+                for token in tokens[i + 2 :]:
+                    self.validate_token(token, "key_value")
+                    param, value = token.split("=")
+                    params[param] = value
+                aol = params.pop("aol", 1e5)
+                self.components[refdes] = COMPONENTS["opamp"](refdes, aol)
+                self.nodes[refdes] = nodes
             else:
                 raise ValueError(f"'{line}' unrecognized")
 
@@ -119,16 +141,16 @@ class Netlist:
 
     def __call__(self, file):
         self.initialize_attributes()
-        try:
-            for line in file.readlines():
-                line = line.strip()
-                if line != "":
-                    self.netlist.append(line.strip())
-        except AttributeError:
+        if isinstance(file, io.TextIOBase):
+            lines = file.readlines()
+        elif pathlib.Path(file).is_file():
             with open(file, "rt", encoding="utf-8-sig") as f:
-                for line in f.readlines():
-                    line = line.strip()
-                    if line != "":
-                        self.netlist.append(line.strip())
+                lines = f.readlines()
+        else:
+            lines = file.split("\n")
+        for line in lines:
+            line = line.strip()
+            if line != "":
+                self.netlist.append(line.strip())
         self.parse()
         return self.makecircuit()

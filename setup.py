@@ -37,5 +37,5 @@ setup(
         "Intended Audience :: Science/Research",
     ],
     url="",
-    install_requires=["unyt"],
+    install_requires=["numpy", "sympy", "matplotlib", "unyt"],
 )

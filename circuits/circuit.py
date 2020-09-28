@@ -6,9 +6,17 @@ Circuit is a container of Components defining the connections
 - As a container, Circuit is a mapping between a Component and a Node
 """
 import numpy as np
-from sympy import Matrix, linsolve, lambdify
-from circuits.common import PortDirection
-from circuits.components import Port, Pin, PowerTap, PassiveComponent, VoltageSource
+from sympy import Matrix, linsolve, lambdify, sympify, Symbol
+from unyt import Hz, dB
+from circuits.common import PortDirection, j, π
+from circuits.components import (
+    Port,
+    Pin,
+    PowerTap,
+    PassiveComponent,
+    VoltageSource,
+    Opamp,
+)
 
 
 class Circuit:
@@ -167,6 +175,47 @@ class Circuit:
                 passives.add(cmp)
         return passives
 
+    def _pin2node(self, pin):
+        lu = {}
+        for node, pins in self.nodes.items():
+            for p in pins:
+                lu[p] = node
+        return lu[pin]
+
+    def _isopampdriven(self, node):
+        # Determine if node is driven by an opamp
+        # Assumes only one opamp output connected to node
+        for pin in self.nodes[node]:
+            cmp = getattr(pin, "owner", None)
+            if isinstance(cmp, Opamp) and pin.name == "OUT":
+                break
+        else:
+            return False
+        return True
+
+    def _opampadmittancerow(self, node, system_nodes):
+        # Form admittances for an opamp driven node
+        for pin in self.nodes[node]:
+            cmp = getattr(pin, "owner", None)
+            if isinstance(cmp, Opamp) and pin.name == "OUT":
+                break
+        else:
+            return False
+        inp = self._pin2node(cmp.pin("IN+"))
+        inn = self._pin2node(cmp.pin("IN-"))
+        aol = cmp.aol
+        admittance_row = []
+        for col in system_nodes:
+            if col == inp:
+                admittance_row.append(-aol)
+            elif col == inn:
+                admittance_row.append(aol)
+            elif col == node:
+                admittance_row.append(sympify("1"))
+            else:
+                admittance_row.append(sympify("0"))
+        return admittance_row
+
     def transfer_function(self, input_port="in", output_port="out", reference="gnd"):
         """Find the transfer function from input to output with respect to reference
 
@@ -198,6 +247,10 @@ class Circuit:
         admittance_matrix = []
         for row in system_nodes:
             admittance_row = []
+            if self._isopampdriven(row):
+                admittance_row = self._opampadmittancerow(row, system_nodes)
+                admittance_matrix.append(admittance_row)
+                continue
             for col in system_nodes:
                 if row == col:
                     admittances = [c.admittance for c in self._get_node_passives(col)]
@@ -381,6 +434,35 @@ class Circuit:
         else:
             src_tol = -source.tol
         return tf(*values) * source.value * (1 + src_tol)
+
+    def bode_plot(self, input_port="in", output_port="out", reference="gnd"):
+        """Generate bode plot
+
+        Return frequency response as tuple (frequency, magnitude)
+        """
+        tf_expr = self.transfer_function(input_port, output_port, reference)
+        syms = tf_expr.free_symbols
+        laplace_s = None
+        for sym in syms:
+            if sym.name == "s":
+                laplace_s = sym
+        if laplace_s is not None:
+            syms.remove(laplace_s)
+            f = Symbol("f")
+            syms.add(f)
+            tf_expr = tf_expr.subs(laplace_s, j * 2 * π * f)
+        syms = list(syms)
+        tf = lambdify(syms, tf_expr)
+        cmps = {cmp.name: cmp for cmp in self._components}
+        freq = np.logspace(0, 5, 100) * Hz
+        values = []
+        for sym in syms:
+            if sym == f:
+                values.append(freq)
+            else:
+                values.append(cmps[str(sym)].value)
+
+        return (freq, 20 * np.log10(np.abs(tf(*values).in_base())) * dB)
 
     def __dir__(self):
         attrs = list(filter(lambda s: not s.startswith("_"), super().__dir__()))
