@@ -6,7 +6,7 @@ Circuit is a container of Components defining the connections
 - As a container, Circuit is a mapping between a Component and a Node
 """
 import numpy as np
-from sympy import Matrix, linsolve, lambdify, sympify, Symbol
+from sympy import Matrix, linsolve, lambdify, sympify, Symbol, root
 from unyt import Hz, dB
 from circuits.common import PortDirection, j, π
 from circuits.components import (
@@ -216,30 +216,42 @@ class Circuit:
                 admittance_row.append(sympify("0"))
         return admittance_row
 
-    def transfer_function(self, input_port="in", output_port="out", reference="gnd"):
+    def transfer_function(self, in_node="in", out_node="out", reference="gnd"):
         """Find the transfer function from input to output with respect to reference
 
-        For now, there is only one input and one output allowed and only passives.
+        For now, there is only one input and one output allowed.
 
-        Args:
-            input_port (Port): input signal
-            output_port (Port): output signal
-            reference (Port): signal reference
+        Parameters
+        ----------
+            in_node : node or port name
+                input signal
+            out_node : node or port name
+                output signal
+            reference : node or port name
+                signal reference
 
-        Returns:
+        Returns
+        -------
             (Sympy expression)
         """
         system_nodes = set(self._nodes.keys())
-        input_node = None
-        output_node = None
-        gnd_nodes = set()
+        in_node = str(in_node)
+        out_node = str(out_node)
+        reference = str(reference)
+        input_node = in_node if in_node in system_nodes else None
+        output_node = out_node if out_node in system_nodes else None
+        gnd_nodes = reference if reference in system_nodes else set()
         for node, connections in self._nodes.items():
-            if Port(input_port, PortDirection.IN) in connections:
+            if not input_node and Port(in_node, PortDirection.IN) in connections:
                 input_node = node
-            if Port(output_port, PortDirection.OUT) in connections:
+            if not output_node and Port(out_node, PortDirection.OUT) in connections:
                 output_node = node
             if PowerTap(reference) in connections:
                 gnd_nodes.add(node)
+        gnd_nodes = (
+            set("0") if "0" in system_nodes and gnd_nodes == set() else gnd_nodes
+        )
+        gnd_nodes = set(0) if 0 in system_nodes and gnd_nodes == set() else gnd_nodes
         if input_node is None or output_node is None or len(gnd_nodes) == 0:
             raise ValueError("Missing input or output Port or gnd reference")
         system_nodes.remove(input_node)
@@ -276,18 +288,23 @@ class Circuit:
         tf = solution_vector[list(system_nodes).index(output_node)]
         return tf
 
-    def dc_nom(self, input_port="in", output_port="out", reference="gnd"):
+    def dc_nom(self, in_node="in", out_node="out", reference="gnd"):
         """Compute the nominal DC value from input to output with respect to reference
 
-        Args:
-            input_port (Port): input signal
-            output_port (Port): output signal
-            reference (Port): signal reference
+        Parameters
+        ----------
+            in_node : Port or node
+                input signal
+            out_node : Port or node
+                output signal
+            reference : Port or node
+                signal reference
 
-        Returns:
-            (Quantity)
+        Returns
+        -------
+            unyt_quantity
         """
-        tf_expr = self.transfer_function(input_port, output_port, reference)
+        tf_expr = self.transfer_function(in_node, out_node, reference)
         syms = tf_expr.free_symbols
         laplace_s = None
         for sym in syms:
@@ -300,8 +317,11 @@ class Circuit:
         tf = lambdify(syms, tf_expr)
         cmps = {cmp.name: cmp for cmp in self._components}
         values = [cmps[str(name)].value for name in syms]
+        system_nodes = set(self._nodes.keys())
+        in_node = str(in_node)
+        input_node = in_node if in_node in system_nodes else None
         for node, connections in self._nodes.items():
-            if Port(input_port, PortDirection.IN) in connections:
+            if Port(in_node, PortDirection.IN) in connections:
                 input_node = node
                 break
         cmps = [
@@ -315,20 +335,23 @@ class Circuit:
                 break
         return tf(*values) * source.value
 
-    def dc_max(self, input_port="in", output_port="out", reference="gnd"):
+    def dc_max(self, in_node="in", out_node="out", reference="gnd"):
         """Compute the maximum DC value from input to output with respect to reference
 
         Parameters
         ----------
-        input_port : Port, input signal
-        output_port : Port, output signal
-        reference : Port, signal reference
+        in_node : Port or node
+            input signal
+        out_node : Portor node
+            output signal
+        reference : Port or node
+            signal reference
 
         Returns
         -------
         dc_max : unyt_quantity
         """
-        tf_expr = self.transfer_function(input_port, output_port, reference)
+        tf_expr = self.transfer_function(in_node, out_node, reference)
         syms = tf_expr.free_symbols
         laplace_s = None
         for sym in syms:
@@ -356,8 +379,11 @@ class Circuit:
             tols.append(tol)
         tf = lambdify(syms, tf_expr)
         values = [v * (1 + t) for v, t in zip(values, tols)]
+        system_nodes = set(self._nodes.keys())
+        in_node = str(in_node)
+        input_node = in_node if in_node in system_nodes else None
         for node, connections in self._nodes.items():
-            if Port(input_port, PortDirection.IN) in connections:
+            if Port(in_node, PortDirection.IN) in connections:
                 input_node = node
                 break
         cmps = [
@@ -375,20 +401,23 @@ class Circuit:
             src_tol = source.tol
         return tf(*values) * source.value * (1 + src_tol)
 
-    def dc_min(self, input_port="in", output_port="out", reference="gnd"):
+    def dc_min(self, in_node="in", out_node="out", reference="gnd"):
         """Compute the maximum DC value from input to output with respect to reference
 
         Parameters
         ----------
-        input_port : Port, input signal
-        output_port : Port, output signal
-        reference : Port, signal reference
+        in_node : Port or node
+            input signal
+        out_node : Port or node
+            output signal
+        reference : Port or node
+            signal reference
 
         Returns
         -------
         dc_min : unyt_quantity
         """
-        tf_expr = self.transfer_function(input_port, output_port, reference)
+        tf_expr = self.transfer_function(in_node, out_node, reference)
         syms = tf_expr.free_symbols
         laplace_s = None
         for sym in syms:
@@ -416,8 +445,11 @@ class Circuit:
             tols.append(tol)
         tf = lambdify(syms, tf_expr)
         values = [v * (1 + t) for v, t in zip(values, tols)]
+        system_nodes = set(self._nodes.keys())
+        in_node = str(in_node)
+        input_node = in_node if in_node in system_nodes else None
         for node, connections in self._nodes.items():
-            if Port(input_port, PortDirection.IN) in connections:
+            if Port(in_node, PortDirection.IN) in connections:
                 input_node = node
                 break
         cmps = [
@@ -435,12 +467,59 @@ class Circuit:
             src_tol = -source.tol
         return tf(*values) * source.value * (1 + src_tol)
 
-    def bode_plot(self, input_port="in", output_port="out", reference="gnd"):
+    # def bandwidth(self, in_node="in", out_node="out", reference="gnd", level=-3 * dB):
+    #     """Compute frequencies where transfer function is `level`
+
+    #     Parameters
+    #     ----------
+    #     in_node : Port or node
+    #         input signal
+    #     out_node : Port or node
+    #         output signal
+    #     reference : Port or node
+    #         signal reference
+    #     level : unyt_quantity
+    #     """
+    #     tf_expr = self.transfer_function(in_node, out_node, reference)
+    #     syms = tf_expr.free_symbols
+    #     laplace_s = None
+    #     for sym in syms:
+    #         if sym.name == "s":
+    #             laplace_s = sym
+    #     if laplace_s is not None:
+    #         syms.remove(laplace_s)
+    #         f = Symbol("f")
+    #         syms.add(f)
+    #         tf_expr = tf_expr.subs(laplace_s, j * 2 * π * f)
+    #     subs = {}
+    #     for sym in syms:
+    #         if sym == f:
+    #             pass
+    #         else:
+    #             subs[sym] = cmps[str(sym)].value
+    #     tf_expr = tf_expr.subs(subs)
+
+    def bode_plot(
+        self, in_node="in", out_node="out", reference="gnd", frequencies=None
+    ):
         """Generate bode plot
 
-        Return frequency response as tuple (frequency, magnitude)
+        Parameters
+        ----------
+        in_node : Port or node
+            input signal
+        out_node : Port or node
+            output signal
+        reference : Port or node
+            signal reference
+        frequencies : unyt_array or None
+            If None, generate frequencies automatically
+
+        Returns
+        -------
+        Frequency response as tuple (frequency, magnitude)
         """
-        tf_expr = self.transfer_function(input_port, output_port, reference)
+        tf_expr = self.transfer_function(in_node, out_node, reference)
         syms = tf_expr.free_symbols
         laplace_s = None
         for sym in syms:
@@ -454,7 +533,7 @@ class Circuit:
         syms = list(syms)
         tf = lambdify(syms, tf_expr)
         cmps = {cmp.name: cmp for cmp in self._components}
-        freq = np.logspace(0, 5, 100) * Hz
+        freq = np.logspace(0, 5, 100) * Hz if frequencies is None else frequencies
         values = []
         for sym in syms:
             if sym == f:

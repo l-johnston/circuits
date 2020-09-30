@@ -399,6 +399,8 @@ class VoltageSource(Component):
         pins = [Pin("1", 1, self), Pin("2", 2, self)]
         super().__init__(name, pins)
         self._value = value
+        self._tol = 0.0
+        self._tc = unyt_quantity(0.0, "1/K")
 
     @property
     def value(self):
@@ -413,6 +415,24 @@ class VoltageSource(Component):
         if not correct_unit:
             raise ValueError(f"{value} must be in unit volt")
         self._value = value
+
+    @property
+    def tol(self):
+        """value (float): tolerance"""
+        return self._tol
+
+    @tol.setter
+    def tol(self, value):
+        self._tol = value
+
+    @property
+    def tc(self):
+        """value (unyt_quantity or float): temperature coefficient, drift per kelvin"""
+        return self._tc
+
+    @tc.setter
+    def tc(self, value):
+        self._tc = unyt_quantity(value, "1/K")
 
     def __repr__(self):
         return f"<VoltageSource:{self._name},{self._value}>"

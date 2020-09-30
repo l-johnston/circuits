@@ -136,7 +136,7 @@ class Netlist:
         for refdes in self.components:
             component = self.components[refdes]
             for i, node in enumerate(self.nodes[refdes]):
-                self.circuit.connect(component.pin(i + 1), node_number=int(node))
+                self.circuit.connect(component.pin(i + 1), node_number=node)
         return self.circuit
 
     def __call__(self, file):
