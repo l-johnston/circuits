@@ -2,6 +2,7 @@
 # pylint: disable=no-name-in-module
 from unyt import (
     unyt_quantity,
+    unyt_array,
     V,
     A,
     Ω,
@@ -13,8 +14,15 @@ from unyt import (
     m,
     dB,
     matplotlib_support,
+    degC,
+    K,
+    delta_degC,
 )
-from circuits.common import AmbientTemperature
+from circuits.common import (
+    AmbientTemperature,
+    DeviceTemperature,
+    temperature_difference,
+)
 from circuits.components import (
     PortDirection,
     Port,
@@ -25,6 +33,7 @@ from circuits.components import (
     Inductor,
     VoltageSource,
     Opamp,
+    ResistorNetwork,
 )
 from circuits.circuit import Circuit
 from circuits.netlist import Netlist
@@ -33,7 +42,9 @@ from circuits.version import __version__
 __all__ = [
     "unyt_quantity",
     "AmbientTemperature",
+    "temperature_difference",
     "Ta",
+    "T_device",
     "PortDirection",
     "Port",
     "Pin",
@@ -55,11 +66,16 @@ __all__ = [
     "s",
     "kg",
     "m",
+    "degC",
+    "K",
+    "delta_degC",
     "Opamp",
+    "ResistorNetwork",
 ]
 
 # pylint: disable=invalid-name
-Ta = AmbientTemperature(*(unyt_quantity(t, "degC") for t in [23, -40, 70]))
+Ta = AmbientTemperature(*unyt_array([23, -40, 70], "degC"))
+T_device = DeviceTemperature(*unyt_array([38, -25, 85], "degC"))
 pwrtaps = {"gnd": PowerTap("gnd"), "+5V": PowerTap("+5V")}
 signalports = {
     "in": Port("in", PortDirection.IN),

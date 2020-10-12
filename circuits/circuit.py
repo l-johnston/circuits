@@ -6,9 +6,9 @@ Circuit is a container of Components defining the connections
 - As a container, Circuit is a mapping between a Component and a Node
 """
 import numpy as np
-from sympy import Matrix, linsolve, lambdify, sympify, Symbol, root
+from sympy import Matrix, linsolve, lambdify, sympify, Symbol
 from unyt import Hz, dB
-from circuits.common import PortDirection, j, π
+from circuits.common import PortDirection, j, π, temperature_difference
 from circuits.components import (
     Port,
     Pin,
@@ -16,6 +16,7 @@ from circuits.components import (
     PassiveComponent,
     VoltageSource,
     Opamp,
+    PassiveComponentNetwork,
 )
 
 
@@ -166,13 +167,18 @@ class Circuit:
 
     def _get_node_passives(self, node):
         """Get the passive components at a given node"""
-        cmps = [
-            p.owner for p in filter(lambda c: isinstance(c, Pin), self._nodes[node])
-        ]
         passives = set()
-        for cmp in cmps:
+        for obj in self._nodes[node]:
+            if not isinstance(obj, Pin):
+                continue
+            pin = obj
+            cmp = pin.owner
             if isinstance(cmp, PassiveComponent):
                 passives.add(cmp)
+            elif isinstance(cmp, PassiveComponentNetwork):
+                passives.add(cmp.element_at(pin.number))
+            else:
+                pass
         return passives
 
     def _pin2node(self, pin):
@@ -316,7 +322,14 @@ class Circuit:
         syms = list(syms)
         tf = lambdify(syms, tf_expr)
         cmps = {cmp.name: cmp for cmp in self._components}
-        values = [cmps[str(name)].value for name in syms]
+        values = []
+        for name in syms:
+            name = str(name)
+            try:
+                values.append(cmps[name].value)
+            except KeyError:
+                pn_name, name = name.split("_")
+                values.append(cmps[pn_name][name].value)
         system_nodes = set(self._nodes.keys())
         in_node = str(in_node)
         input_node = in_node if in_node in system_nodes else None
@@ -335,7 +348,7 @@ class Circuit:
                 break
         return tf(*values) * source.value
 
-    def dc_max(self, in_node="in", out_node="out", reference="gnd"):
+    def dc_max(self, in_node="in", out_node="out", reference="gnd", temperature=None):
         """Compute the maximum DC value from input to output with respect to reference
 
         Parameters
@@ -346,6 +359,7 @@ class Circuit:
             output signal
         reference : Port or node
             signal reference
+        temperature : unyt_quantity in degree Celsius
 
         Returns
         -------
@@ -362,23 +376,62 @@ class Circuit:
             tf_expr = tf_expr.subs(laplace_s, 0.0)
         syms = list(syms)
         cmps = {cmp.name: cmp for cmp in self._components}
-        values = [cmps[str(name)].value for name in syms]
-        tols = []
+        rows = []
         for sym in syms:
+            name = str(sym)
+            element = None
+            try:
+                value = cmps[name].value
+            except KeyError:
+                name, element = name.split("_")
+                value = cmps[name][element].value
+            rows.append([cmps[name], element, value])
+        for i, sym in enumerate(syms):
             tf_sens = lambdify(syms, tf_expr.diff(sym))
-            sensitivity = tf_sens(*values)
-            tol = cmps[str(sym)].tol
-            if np.all(sensitivity > 0):
-                if isinstance(tol, tuple):
-                    tol = tol[1]
-            else:
-                if isinstance(tol, tuple):
-                    tol = tol[0]
+            values = [row[2] for row in rows]
+            sensitivity = tf_sens(*values).item()
+            rows[i].extend([sensitivity])
+        for i in range(len(syms)):
+            cmp = rows[i][0]
+            sensitivity_i = rows[i][3]
+            sign_i = np.sign(sensitivity_i)
+            reftemp = cmp.reference_temperature
+            if temperature is None:
+                temperature = reftemp
+            deltaT = abs(temperature_difference(reftemp, temperature))
+            if isinstance(cmp, PassiveComponent):
+                tol = sign_i * cmp.tol
+                tc = sign_i * cmp.tc
+            elif isinstance(cmp, PassiveComponentNetwork):
+                element_i = rows[i][1]
+                if cmp[element_i].tol == cmp.tol:
+                    tol = sign_i * cmp[element_i].tol
+                    tc = sign_i * cmp[element_i].tc
                 else:
-                    tol = -tol
-            tols.append(tol)
+                    for k in range(len(syms)):
+                        element_k = rows[k][1]
+                        if cmp[element_k].tol == cmp.tol:
+                            break
+                    tol = cmp[element_k].tol
+                    tc = cmp[element_k].tc
+                    sensitivity_k = rows[k][3]
+                    sign_k = np.sign(sensitivity_k)
+                    rel_tol = cmp[element_i].tol
+                    rel_tc = cmp[element_i].tc
+                    median_tol = sign_k * (tol - rel_tol)
+                    median_tc = sign_k * (tc - rel_tc)
+                    tol = median_tol + sign_i * rel_tol
+                    tc = median_tc + sign_i * rel_tc
+                rows[i].extend([tol, deltaT, tc])
+            else:
+                pass
         tf = lambdify(syms, tf_expr)
-        values = [v * (1 + t) for v, t in zip(values, tols)]
+        tols = []
+        for row in rows:
+            tol, deltaT, tc = row[4:]
+            tols.append(tol + deltaT * tc)
+        values = [row[2] for row in rows]
+        params = [v * (1 + t) for v, t in zip(values, tols)]
         system_nodes = set(self._nodes.keys())
         in_node = str(in_node)
         input_node = in_node if in_node in system_nodes else None
@@ -399,9 +452,11 @@ class Circuit:
             src_tol = source.tol[1]
         else:
             src_tol = source.tol
-        return tf(*values) * source.value * (1 + src_tol)
+        ret_pos = tf(*params) * source.value * (1 + src_tol)
+        ret_neg = tf(*params) * source.value * (1 - src_tol)
+        return max(ret_pos, ret_neg)
 
-    def dc_min(self, in_node="in", out_node="out", reference="gnd"):
+    def dc_min(self, in_node="in", out_node="out", reference="gnd", temperature=None):
         """Compute the maximum DC value from input to output with respect to reference
 
         Parameters
@@ -412,6 +467,7 @@ class Circuit:
             output signal
         reference : Port or node
             signal reference
+        temperature : unyt_quantity in degree Celsius
 
         Returns
         -------
@@ -428,23 +484,62 @@ class Circuit:
             tf_expr = tf_expr.subs(laplace_s, 0.0)
         syms = list(syms)
         cmps = {cmp.name: cmp for cmp in self._components}
-        values = [cmps[str(name)].value for name in syms]
-        tols = []
+        rows = []
         for sym in syms:
+            name = str(sym)
+            element = None
+            try:
+                value = cmps[name].value
+            except KeyError:
+                name, element = name.split("_")
+                value = cmps[name][element].value
+            rows.append([cmps[name], element, value])
+        for i, sym in enumerate(syms):
             tf_sens = lambdify(syms, tf_expr.diff(sym))
-            sensitivity = tf_sens(*values)
-            tol = cmps[str(sym)].tol
-            if np.all(sensitivity > 0):
-                if isinstance(tol, tuple):
-                    tol = tol[0]
+            values = [row[2] for row in rows]
+            sensitivity = tf_sens(*values).item()
+            rows[i].extend([sensitivity])
+        for i in range(len(syms)):
+            cmp = rows[i][0]
+            sensitivity_i = rows[i][3]
+            sign_i = -1 * np.sign(sensitivity_i)
+            reftemp = cmp.reference_temperature
+            if temperature is None:
+                temperature = reftemp
+            deltaT = abs(temperature_difference(reftemp, temperature))
+            if isinstance(cmp, PassiveComponent):
+                tol = sign_i * cmp.tol
+                tc = sign_i * cmp.tc
+            elif isinstance(cmp, PassiveComponentNetwork):
+                element_i = rows[i][1]
+                if cmp[element_i].tol == cmp.tol:
+                    tol = sign_i * cmp[element_i].tol
+                    tc = sign_i * cmp[element_i].tc
                 else:
-                    tol = -tol
+                    for k in range(len(syms)):
+                        element_k = rows[k][1]
+                        if cmp[element_k].tol == cmp.tol:
+                            break
+                    tol = cmp[element_k].tol
+                    tc = cmp[element_k].tc
+                    sensitivity_k = rows[k][3]
+                    sign_k = -1 * np.sign(sensitivity_k)
+                    rel_tol = cmp[element_i].tol
+                    rel_tc = cmp[element_i].tc
+                    median_tol = sign_k * (tol - rel_tol)
+                    median_tc = sign_k * (tc - rel_tc)
+                    tol = median_tol + sign_i * rel_tol
+                    tc = median_tc + sign_i * rel_tc
+                rows[i].extend([tol, deltaT, tc])
             else:
-                if isinstance(tol, tuple):
-                    tol = tol[1]
-            tols.append(tol)
+                pass
         tf = lambdify(syms, tf_expr)
-        values = [v * (1 + t) for v, t in zip(values, tols)]
+        tols = []
+        for row in rows:
+            tol, deltaT, tc = row[4:]
+            tols.append(tol + deltaT * tc)
+        values = [row[2] for row in rows]
+        params = [v * (1 + t) for v, t in zip(values, tols)]
         system_nodes = set(self._nodes.keys())
         in_node = str(in_node)
         input_node = in_node if in_node in system_nodes else None
@@ -465,7 +560,9 @@ class Circuit:
             src_tol = source.tol[0]
         else:
             src_tol = -source.tol
-        return tf(*values) * source.value * (1 + src_tol)
+        ret_pos = tf(*params) * source.value * (1 + src_tol)
+        ret_neg = tf(*params) * source.value * (1 - src_tol)
+        return min(ret_pos, ret_neg)
 
     # def bandwidth(self, in_node="in", out_node="out", reference="gnd", level=-3 * dB):
     #     """Compute frequencies where transfer function is `level`
@@ -536,10 +633,15 @@ class Circuit:
         freq = np.logspace(0, 5, 100) * Hz if frequencies is None else frequencies
         values = []
         for sym in syms:
+            name = str(sym)
             if sym == f:
                 values.append(freq)
             else:
-                values.append(cmps[str(sym)].value)
+                try:
+                    values.append(cmps[name].value)
+                except KeyError:
+                    name, element = name.split("_")
+                    values.append(cmps[name][element].value)
 
         return (freq, 20 * np.log10(np.abs(tf(*values).in_base())) * dB)
 

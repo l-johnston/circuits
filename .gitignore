@@ -5,4 +5,4 @@ __pycache__/
 circuits.egg-info/
 tests/
 dev_ex/
-*.pdf
+reference_docs/
