@@ -49,7 +49,7 @@ COMPONENTS = {
 }
 
 TOKEN_TYPES = {
-    "refdes": r"^([RCLV]|XU|RN|RP)([0-9]+)\.?([0-9]+)?$",
+    "refdes": r"^([RCLV]|XU|RN|RP)([0-9]+|[\w]+)\.?([0-9]+)?$",
     "node": r"^[\w]+$",
     "value": VALUE_PATTERN,
     "key_value": r"^[\w]+=" + VALUE_PATTERN + "$",
@@ -149,7 +149,7 @@ class Netlist:
                     self.validate_token(token, "key_value")
                     param, value = token.split("=")
                     params[param] = value
-                aol = params.pop("aol", 1e5)
+                aol = params.pop("Aol", 1e5)
                 self.components[refdes] = COMPONENTS["opamp"](refdes, aol)
                 self.nodes[refdes] = nodes
             else:
@@ -176,7 +176,10 @@ class Netlist:
         for refdes in self.components:
             component = self.components[refdes]
             for i, node in enumerate(self.nodes[refdes], start=1):
-                self.circuit.connect(component.pin(i), node_number=node)
+                if component.parasitic:
+                    self.circuit.connect_parasitic(component.pin(i), node=node)
+                else:
+                    self.circuit.connect(component.pin(i), node_number=node)
         return self.circuit
 
     def __call__(self, file):

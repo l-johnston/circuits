@@ -26,10 +26,13 @@ class Circuit:
     def __init__(self, name=""):
         self._name = name
         self._components = set()
+        self._parasitic_components = set()
         self._ports = set()
         self._nodes = {}
+        self._parasitic_nodes = {}
         # node 0 is GND
         self._nodecnt = 1
+        self._include_parasitics = True
 
     @property
     def name(self):
@@ -55,6 +58,34 @@ class Circuit:
         """nodes (dict): node dict"""
         return self._nodes
 
+    @property
+    def include_parasitics(self):
+        """Whether to include parasitics
+
+        Parameters
+        ----------
+        value : bool
+        """
+        return self._include_parasitics
+
+    @include_parasitics.setter
+    def include_parasitics(self, value):
+        self._include_parasitics = value
+        if value:
+            for node, pins in self._parasitic_nodes.items():
+                self.connect(*pins, node_number=node)
+        else:
+            for node in self._nodes:
+                initial_pins = self._nodes[node].copy()
+                remaining_pin = None
+                for pin in initial_pins:
+                    if not pin.owner.parasitic:
+                        remaining_pin = pin
+                        break
+                for pin in initial_pins:
+                    if pin.owner.parasitic:
+                        self.disconnect(pin, remaining_pin)
+
     def __repr__(self):
         return f"<Circuit: {self._name}>"
 
@@ -66,10 +97,15 @@ class Circuit:
             node_number (int): optional node number assignment
         """
         if node_number is None:
-            node_number = self._nodecnt
-            self._nodecnt += 1
-            while self._nodecnt in self._nodes.keys():
+            for node, connections in self.nodes.items():
+                if set(ports).intersection(connections):
+                    break
+            else:
+                node = self._nodecnt
                 self._nodecnt += 1
+                while self._nodecnt in self._nodes.keys():
+                    self._nodecnt += 1
+            node_number = node
         for port in ports:
             if isinstance(port, Port):
                 self._ports.add(port)
@@ -81,6 +117,16 @@ class Circuit:
                 self._nodes[node_number].add(port)
             except KeyError:
                 self._nodes[node_number] = {port}
+
+    def connect_parasitic(self, pin, node):
+        """Connect a parasitic component pin to a node"""
+        self._parasitic_components.add(pin.owner)
+        try:
+            self._parasitic_nodes[node].add(pin)
+        except KeyError:
+            self._parasitic_nodes[node] = {pin}
+        if self.include_parasitics:
+            self.connect(pin, node_number=node)
 
     def _checkshortednodes(self):
         """Check for short between two nodes
@@ -209,13 +255,13 @@ class Circuit:
             return False
         inp = self._pin2node(cmp.pin("IN+"))
         inn = self._pin2node(cmp.pin("IN-"))
-        aol = cmp.aol
+        Aol = cmp.Aol
         admittance_row = []
         for col in system_nodes:
             if col == inp:
-                admittance_row.append(-aol)
+                admittance_row.append(-Aol)
             elif col == inn:
-                admittance_row.append(aol)
+                admittance_row.append(Aol)
             elif col == node:
                 admittance_row.append(sympify("1"))
             else:

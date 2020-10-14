@@ -1,7 +1,7 @@
 """Definition of component types"""
 import numbers
 from sympy import Symbol, sympify
-from unyt import unyt_quantity, degC, delta_degC
+from unyt import unyt_quantity, degC, delta_degC, V
 from circuits.common import PortDirection, temperature_difference
 
 
@@ -131,6 +131,8 @@ class Component:
                 self._pins[pin.number] = pin
             else:
                 raise TypeError(f"{pin} must be a Pin")
+        self._parasitic = False
+        self.parasitics = {}
         for k, v in kwargs.items():
             setattr(self, k, v)
 
@@ -158,6 +160,25 @@ class Component:
             return self._pins[name]
         except KeyError:
             raise ValueError(f"unknown pin {name}") from None
+
+    @property
+    def parasitic(self):
+        """Whether a component is parasitic
+
+        Parameters
+        ----------
+        value : bool
+        """
+        return self._parasitic
+
+    @parasitic.setter
+    def parasitic(self, value):
+        self._parasitic = bool(value)
+
+    @property
+    def has_parasitics(self):
+        """Whether this component has internally defined parasitics"""
+        return bool(len(self.parasitics))
 
 
 class PassiveComponent(Component):
@@ -550,7 +571,7 @@ class Opamp(Component):
     Parameters
     ----------
     name : str
-    aol : sympy expression, open-loop transfer function Aol(s)
+    Aol : sympy expression, open-loop transfer function Aol(s)
 
     Pins
     ----
@@ -559,14 +580,18 @@ class Opamp(Component):
     3 'OUT' output
     """
 
-    def __init__(self, name, aol, **kwargs):
+    def __init__(self, name, Aol, **kwargs):
         pins = [
             Pin("IN+", 1, self, direction=PortDirection.IN),
             Pin("IN-", 2, self, direction=PortDirection.IN),
             Pin("OUT", 3, self, direction=PortDirection.OUT),
         ]
         super().__init__(name, pins, **kwargs)
-        self.aol = sympify(aol)
+        self.Aol = sympify(Aol)
+        if hasattr(self, "Vos"):
+            self.Vos = unyt_quantity(self.Vos, V)
+            vos = VoltageSource(f"{name}_Vos", value=self.Vos)
+            self.parasitics[vos] = [None, self.pin(2)]
 
 
 class PassiveComponentNetwork(Component):
