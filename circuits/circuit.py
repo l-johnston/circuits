@@ -448,6 +448,7 @@ class Circuit:
             if isinstance(cmp, PassiveComponent):
                 tol = sign_i * cmp.tol
                 tc = sign_i * cmp.tc
+                rows[i].extend([tol, deltaT, tc])
             elif isinstance(cmp, PassiveComponentNetwork):
                 element_i = rows[i][1]
                 if cmp[element_i].tol == cmp.tol:
@@ -556,6 +557,7 @@ class Circuit:
             if isinstance(cmp, PassiveComponent):
                 tol = sign_i * cmp.tol
                 tc = sign_i * cmp.tc
+                rows[i].extend([tol, deltaT, tc])
             elif isinstance(cmp, PassiveComponentNetwork):
                 element_i = rows[i][1]
                 if cmp[element_i].tol == cmp.tol:

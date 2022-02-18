@@ -23,6 +23,7 @@ SUFFIXES = {
     "meg": "6",
     "g": "9",
     "t": "12",
+    None: 0,
 }
 
 VALUE_PATTERN = r"([+-]?[0-9]+\.?[0-9]*)(e[+-]?[0-9]+|meg|f|p|n|u|m|k|g|t)?"
@@ -34,8 +35,11 @@ def scale_value(value):
         n, s = re.match("^" + VALUE_PATTERN + "$", value, re.IGNORECASE).groups()
     except AttributeError:
         raise ValueError(f"{value} is not a valid value") from None
-    s = SUFFIXES.get(s, 0)
-    return float(f"{n}e{s}")
+    try:
+        sn = SUFFIXES[s]
+    except KeyError:
+        return float(f"{n}{s}")
+    return float(f"{n}e{sn}")
 
 
 COMPONENTS = {

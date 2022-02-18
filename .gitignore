@@ -6,3 +6,4 @@ circuits.egg-info/
 tests/
 dev_ex/
 reference_docs/
+venv/
